@@ -1,3 +1,4 @@
+from contextlib import asynccontextmanager
 from io import BytesIO
 
 import cv2
@@ -9,7 +10,33 @@ from fastapi import FastAPI, HTTPException
 from PIL import Image
 from pydantic import BaseModel, HttpUrl
 
-app = FastAPI()
+
+def create_http_client(use_proxy: bool = True) -> httpx.AsyncClient:
+    """Create http client with or without proxy."""
+    if use_proxy:
+        return httpx.AsyncClient()
+    else:
+        # Create client with direct connections (no proxy)
+        return httpx.AsyncClient(
+            mounts={
+                "http://": httpx.AsyncHTTPTransport(),
+                "https://": httpx.AsyncHTTPTransport(),
+            }
+        )
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    # Startup: create two clients - one with proxy, one without
+    app.state.http_client_with_proxy = create_http_client(use_proxy=True)
+    app.state.http_client_no_proxy = create_http_client(use_proxy=False)
+    yield
+    # Shutdown: close both clients
+    await app.state.http_client_with_proxy.aclose()
+    await app.state.http_client_no_proxy.aclose()
+
+
+app = FastAPI(lifespan=lifespan)
 
 
 class ImageUrlRequest(BaseModel):
@@ -33,14 +60,30 @@ class ImageHashResponse(BaseModel):
     pdqhash: PdqHashResult
 
 
+def should_use_proxy(url: str) -> bool:
+    from urllib.parse import urlparse
+
+    parsed = urlparse(url)
+    hostname = parsed.hostname or ""
+    # Single domain name (no dot) should not use proxy
+    if "." not in hostname:
+        return False
+    return True
+
+
 @app.post("/get-image-hash", response_model=ImageHashResponse)
 async def process_image(request: ImageUrlRequest):
     # Download image from URL
     try:
-        async with httpx.AsyncClient() as client:
-            response = await client.get(str(request.url), timeout=30.0)
-            response.raise_for_status()
-            image_data = response.content
+        url_str = str(request.url)
+        # Choose client based on whether proxy should be used
+        if should_use_proxy(url_str):
+            client: httpx.AsyncClient = app.state.http_client_with_proxy
+        else:
+            client: httpx.AsyncClient = app.state.http_client_no_proxy
+        response = await client.get(url_str, timeout=30.0)
+        response.raise_for_status()
+        image_data = response.content
     except httpx.HTTPError as e:
         raise HTTPException(
             status_code=400, detail=f"Failed to download image: {str(e)}"
