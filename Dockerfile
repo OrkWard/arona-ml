@@ -1,6 +1,7 @@
 FROM python:3.14-slim
 
 WORKDIR /app
+LABEL org.opencontainers.image.source="https://github.com/OrkWard/arona-ml"
 
 # Install system dependencies for opencv and pdqhash
 RUN apt-get update && apt-get install -y \
@@ -10,6 +11,7 @@ RUN apt-get update && apt-get install -y \
     libxext6 \
     libxrender1 \
     libgomp1 \
+    g++ \
     && rm -rf /var/lib/apt/lists/*
 
 # Install uv
