@@ -1,4 +1,4 @@
-IMAGE_NAME := ghcr.io/orkward/arona-ml
+IMAGE_NAME := localhost:5000/arona-ml
 
 docker:
 	docker build -t $(IMAGE_NAME):latest .
